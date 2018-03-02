@@ -1481,6 +1481,10 @@ public class ExpressionCodegen extends KtVisitor<StackValue, StackValue> impleme
         }
 
         if (tryCatchBlockEnd != null) {
+            if (finallyBlockStackElement != null) {
+                markLineNumber(finallyBlockStackElement.expression, true);
+            }
+
             v.goTo(tryCatchBlockEnd);
         }
 
