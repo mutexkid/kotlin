@@ -345,7 +345,7 @@ class MethodInliner(
         )
 
         val transformationVisitor = object : MethodVisitor(API, transformedNode) {
-            private val GENERATE_DEBUG_INFO = GENERATE_SMAP && inlineOnlySmapSkipper == null
+            private val GENERATE_DEBUG_INFO = GENERATE_SMAP
 
             private val isInliningLambda = nodeRemapper.isInsideInliningLambda
 
@@ -405,7 +405,7 @@ class MethodInliner(
             override fun visitLocalVariable(
                     name: String, desc: String, signature: String?, start: Label, end: Label, index: Int
             ) {
-                if (isInliningLambda || GENERATE_DEBUG_INFO) {
+                if (isInliningLambda || (GENERATE_DEBUG_INFO && inlineOnlySmapSkipper == null)) {
                     val varSuffix = if (inliningContext.isRoot && !isFakeLocalVariableForInline(name)) INLINE_FUN_VAR_SUFFIX else ""
                     val varName = if (!varSuffix.isEmpty() && name == "this") name + "_" else name
                     super.visitLocalVariable(varName + varSuffix, desc, signature, start, end, getNewIndex(index))
