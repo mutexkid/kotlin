@@ -35,9 +35,14 @@ import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
 class KotlinStructureViewElement(
-    val element: NavigatablePsiElement,
+    element: NavigatablePsiElement,
     private val isInherited: Boolean = false
 ) : PsiTreeElementBase<NavigatablePsiElement>(element), Queryable {
+
+    val element: NavigatablePsiElement?
+        get() {
+            return super.getElement()
+        }
 
     private var kotlinPresentation
             by AssignableLazyProperty {
@@ -74,11 +79,13 @@ class KotlinStructureViewElement(
     }
 
     override fun getChildrenBase(): Collection<StructureViewTreeElement> {
-        val children = when (element) {
-            is KtFile -> element.declarations
-            is KtClass -> element.getStructureDeclarations()
-            is KtClassOrObject -> element.declarations
-            is KtFunction, is KtClassInitializer, is KtProperty -> element.collectLocalDeclarations()
+        val el = element
+
+        val children = when (el) {
+            is KtFile -> el.declarations
+            is KtClass -> el.getStructureDeclarations()
+            is KtClassOrObject -> el.declarations
+            is KtFunction, is KtClassInitializer, is KtProperty -> el.collectLocalDeclarations()
             else -> emptyList()
         }
 
@@ -104,14 +111,18 @@ class KotlinStructureViewElement(
     private fun isPublic(descriptor: DeclarationDescriptor?) =
         (descriptor as? DeclarationDescriptorWithVisibility)?.visibility == Visibilities.PUBLIC
 
-    private fun countDescriptor(): DeclarationDescriptor? = when {
-        !element.isValid -> null
-        element !is KtDeclaration -> null
-        element is KtAnonymousInitializer -> null
-        else -> runReadAction {
-            if (!DumbService.isDumb(element.getProject())) {
-                element.resolveToDescriptorIfAny()
-            } else null
+    private fun countDescriptor(): DeclarationDescriptor? {
+        val el = element
+        return when {
+            el == null -> null
+            !el.isValid -> null
+            el !is KtDeclaration -> null
+            el is KtAnonymousInitializer -> null
+            else -> runReadAction {
+                if (!DumbService.isDumb(el.getProject())) {
+                    el.resolveToDescriptorIfAny()
+                } else null
+            }
         }
     }
 }
