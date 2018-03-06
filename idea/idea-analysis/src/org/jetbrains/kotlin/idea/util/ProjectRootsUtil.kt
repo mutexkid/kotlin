@@ -148,5 +148,8 @@ object ProjectRootsUtil {
 val Module.rootManager: ModuleRootManager
     get() = ModuleRootManager.getInstance(this)
 
+val Module.sourceRoots: Array<VirtualFile>
+    get() = rootManager.sourceRoots
+
 val PsiElement.module: Module?
     get() = ModuleUtilCore.findModuleForPsiElement(this)

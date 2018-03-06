@@ -16,18 +16,22 @@
 
 package org.jetbrains.kotlin.idea.caches
 
+import com.intellij.ProjectTopics
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.ServiceManager
 import com.intellij.openapi.fileTypes.FileTypeRegistry
 import com.intellij.openapi.module.Module
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.rootManager
+import com.intellij.openapi.roots.ModuleRootEvent
+import com.intellij.openapi.roots.ModuleRootListener
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.*
+import com.intellij.psi.PsiManager
 import com.intellij.psi.impl.PsiTreeChangeEventImpl
 import com.intellij.psi.impl.PsiTreeChangePreprocessor
 import com.intellij.psi.search.GlobalSearchScope
@@ -59,7 +63,7 @@ class KotlinPackageContentModificationListener(private val project: Project) {
 
             fun onEvents(events: List<VFileEvent>) {
 
-                val service = ServiceManager.getService(project, PerModulePackageCacheService::class.java)
+                val service = PerModulePackageCacheService.getInstance(project)
                 if (events.size >= FULL_DROP_THRESHOLD) {
                     service.onTooComplexChange()
                 } else {
@@ -67,10 +71,18 @@ class KotlinPackageContentModificationListener(private val project: Project) {
                         .asSequence()
                         .filter { it.file != null }
                         .filter(::isRelevant)
-                        .mapNotNull { it.file }
-                        .filter { it.isDirectory || FileTypeRegistry.getInstance().getFileTypeByFileName(it.name) == KotlinFileType.INSTANCE }
-                        .forEach { file -> service.notifyPackageChange(file) }
+                        .filter {
+                            val vFile = it.file!!
+                            vFile.isDirectory || FileTypeRegistry.getInstance().getFileTypeByFileName(vFile.name) == KotlinFileType.INSTANCE
+                        }
+                        .forEach { event -> service.notifyPackageChange(event) }
                 }
+            }
+        })
+
+        connection.subscribe(ProjectTopics.PROJECT_ROOTS, object : ModuleRootListener {
+            override fun rootsChanged(event: ModuleRootEvent?) {
+                PerModulePackageCacheService.getInstance(project).onTooComplexChange()
             }
         })
     }
@@ -100,6 +112,8 @@ class KotlinPackageStatementPsiTreeChangePreprocessor(private val project: Proje
     }
 }
 
+private typealias ImplicitPackageData = MutableMap<FqName, MutableList<VirtualFile>>
+
 class PerModulePackageCacheService(private val project: Project) {
 
     /*
@@ -107,8 +121,9 @@ class PerModulePackageCacheService(private val project: Project) {
      * Actually an StrongMap<Module, SoftMap<ModuleSourceInfo, SoftMap<FqName, Boolean>>>
      */
     private val cache = ConcurrentHashMap<Module, ConcurrentMap<ModuleSourceInfo, ConcurrentMap<FqName, Boolean>>>()
+    private val implicitPackageCache = ConcurrentHashMap<VirtualFile, ImplicitPackageData>()
 
-    private val pendingVFileChanges: MutableSet<VirtualFile> = mutableSetOf()
+    private val pendingVFileChanges: MutableSet<VFileEvent> = mutableSetOf()
     private val pendingKtFileChanges: MutableSet<KtFile> = mutableSetOf()
 
     private val projectScope = GlobalSearchScope.projectScope(project)
@@ -117,9 +132,10 @@ class PerModulePackageCacheService(private val project: Project) {
         pendingVFileChanges.clear()
         pendingKtFileChanges.clear()
         cache.clear()
+        implicitPackageCache.clear()
     }
 
-    internal fun notifyPackageChange(file: VirtualFile): Unit = synchronized(this) {
+    internal fun notifyPackageChange(file: VFileEvent): Unit = synchronized(this) {
         pendingVFileChanges += file
     }
 
@@ -138,7 +154,8 @@ class PerModulePackageCacheService(private val project: Project) {
             onTooComplexChange()
         } else {
 
-            pendingVFileChanges.forEach { vfile ->
+            pendingVFileChanges.forEach { event ->
+                val vfile = event.file ?: return@forEach
                 // When VirtualFile !isValid (deleted for example), it impossible to use getModuleInfoByVirtualFile
                 // For directory we must check both is it in some sourceRoot, and is it contains some sourceRoot
                 if (vfile.isDirectory || !vfile.isValid) {
@@ -155,6 +172,7 @@ class PerModulePackageCacheService(private val project: Project) {
                         invalidateCacheForModuleSourceInfo(it)
                     }
                 }
+                updateImplicitPackageCache(event)
             }
             pendingVFileChanges.clear()
 
@@ -189,7 +207,28 @@ class PerModulePackageCacheService(private val project: Project) {
         }
     }
 
+    fun getImplicitPackagePrefix(sourceRoot: VirtualFile): FqName {
+        val implicitPackageMap = implicitPackageCache.getOrPut(sourceRoot) { analyzeImplicitPackagePrefixes(sourceRoot) }
+        return implicitPackageMap.keys.singleOrNull() ?: FqName.ROOT
+    }
+
+    private fun analyzeImplicitPackagePrefixes(sourceRoot: VirtualFile): MutableMap<FqName, MutableList<VirtualFile>> {
+        val result = mutableMapOf<FqName, MutableList<VirtualFile>>()
+        val ktFiles = sourceRoot.children.filter { it.fileType == KotlinFileType.INSTANCE }
+        for (ktFile in ktFiles) {
+            val psiFile = PsiManager.getInstance(project).findFile(ktFile) as? KtFile ?: continue
+            result.getOrPut(psiFile.packageFqName) { mutableListOf() }.add(ktFile)
+        }
+        return result
+    }
+
+    private fun updateImplicitPackageCache(event: VFileEvent) {
+    }
+
     companion object {
-        val FULL_DROP_THRESHOLD = 1000
+        const val FULL_DROP_THRESHOLD = 1000
+
+        fun getInstance(project: Project): PerModulePackageCacheService =
+            ServiceManager.getService(project, PerModulePackageCacheService::class.java)
     }
 }
