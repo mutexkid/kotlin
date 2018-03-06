@@ -1403,7 +1403,7 @@ public class ImplementationBodyCodegen extends ClassBodyCodegen {
     }
 
     private void generateTraitMethods() {
-        if (isInterfaceWithoutDefaults(descriptor, state)) return;
+        if (isInterface(descriptor)) return;
 
         List<FunctionDescriptor> restrictedInheritance = new ArrayList<>();
         for (Map.Entry<FunctionDescriptor, FunctionDescriptor> entry : CodegenUtil.getNonPrivateTraitMethods(descriptor).entrySet()) {
